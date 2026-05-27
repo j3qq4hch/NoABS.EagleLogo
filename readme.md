@@ -16,6 +16,6 @@ Below are some examples of the tool output:
 |----------------|---------------|
 |<img src="testData/face.png" width=300> |<img src="figures/face.png" width=300> |
 |<img src="testData/dragon.png" width=300> |<img src="figures/dragon.png" width=300> |
-|<img src="testData/starbucks.png" width=300> |<img src="figures/starbucks.png" width=300> |
+|<img src="testData/Starbucks.png" width=300> |<img src="figures/starbucks.png" width=300> |
 
 Happy using!
