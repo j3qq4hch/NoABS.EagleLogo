@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>img2eagle</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #1a1a1a; color: #ddd; padding: 24px; }
+  h1 { font-size: 18px; margin-bottom: 24px; color: #fff; }
+
+  #drop-zone {
+    border: 2px dashed #444;
+    border-radius: 8px;
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 24px;
+    color: #888;
+  }
+  #drop-zone.drag-over { border-color: #4a9eff; background: #1e2a3a; color: #4a9eff; }
+  #drop-zone input[type=file] { display: none; }
+
+  .controls { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+  .control-row { display: flex; align-items: center; gap: 12px; }
+  label { width: 100px; color: #aaa; font-size: 13px; flex-shrink: 0; }
+  input[type=range] { flex: 1; accent-color: #4a9eff; }
+  .val { width: 40px; text-align: right; font-size: 13px; }
+
+  button {
+    padding: 8px 16px;
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ddd;
+    cursor: pointer;
+    font-family: monospace;
+    font-size: 13px;
+  }
+  button:hover { background: #444; }
+  button.active { background: #2a3a2a; border-color: #4a9; color: #4a9; }
+
+  .section { display: none; margin-bottom: 32px; }
+  .section h2 { font-size: 14px; color: #aaa; margin-bottom: 12px; }
+  .section-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .section-title-row h2 { margin-bottom: 0; }
+  .status { font-size: 12px; color: #666; }
+
+  .canvas-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .canvas-wrap { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+  .canvas-wrap span { font-size: 12px; color: #666; }
+  canvas {
+    max-width: 560px;
+    max-height: 560px;
+    border: 1px solid #333;
+    background: #fff;
+    display: block;
+  }
+</style>
+</head>
+<body>
+<script src="potrace.js"></script>
+<script src="clipper.js"></script>
+
+<h1>img2eagle</h1>
+
+<div id="drop-zone">
+  <input type="file" id="file-input" accept="image/*">
+  Drop image here or <span style="color:#4a9eff;text-decoration:underline;cursor:pointer" id="browse-link">browse</span>
+</div>
+
+<div class="controls" id="controls" style="display:none">
+  <div class="control-row">
+    <label>Threshold</label>
+    <input type="range" id="threshold" min="0" max="255" value="127">
+    <span class="val" id="threshold-val">127</span>
+  </div>
+  <div class="control-row">
+    <label>Detail</label>
+    <input type="range" id="detail" min="1" max="100" value="66">
+    <span class="val" id="detail-val">0.10</span>
+  </div>
+  <div class="control-row">
+    <button id="invert-btn">Invert</button>
+  </div>
+</div>
+
+<div id="bin-section" class="section">
+  <h2>Threshold</h2>
+  <div class="canvas-row">
+    <div class="canvas-wrap">
+      <canvas id="canvas-orig"></canvas>
+      <span>original</span>
+    </div>
+    <div class="canvas-wrap">
+      <canvas id="canvas-bin"></canvas>
+      <span>thresholded</span>
+    </div>
+  </div>
+</div>
+
+<div id="vec-section" class="section">
+  <div class="section-title-row">
+    <h2>Vectorize</h2>
+    <span class="status" id="vec-status"></span>
+  </div>
+  <div class="canvas-wrap" style="align-items:flex-start">
+    <canvas id="canvas-vec"></canvas>
+    <span><span style="color:#4a9eff">■</span> outer contours &nbsp; <span style="color:#ff4444">■</span> holes</span>
+  </div>
+</div>
+
+<div id="stitch-section" class="section">
+  <div class="section-title-row">
+    <h2>Stitching</h2>
+    <span class="status" id="stitch-status"></span>
+    <button id="ruler-btn">Ruler</button>
+    <span class="status" id="scale-display"></span>
+  </div>
+  <div class="canvas-wrap" style="align-items:flex-start">
+    <div style="position:relative;display:inline-block;line-height:0">
+      <canvas id="canvas-stitch"></canvas>
+      <canvas id="canvas-ruler" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;background:transparent;border:none"></canvas>
+    </div>
+    <div id="mm-row" style="display:none;margin-top:10px;align-items:center;gap:8px;font-size:13px">
+      <span id="px-label" style="color:#aaa"></span>
+      <span style="color:#555">=</span>
+      <input type="number" id="mm-input" placeholder="enter mm" min="0.001" step="0.001"
+             style="width:110px;background:#222;border:1px solid #555;color:#ddd;padding:4px 8px;font-family:monospace;font-size:13px;border-radius:3px">
+      <span style="color:#aaa">mm</span>
+    </div>
+    <span style="margin-top:6px">each color = one polygon, no holes</span>
+  </div>
+</div>
+
+<div id="export-section" class="section">
+  <div class="section-title-row">
+    <h2>Export</h2>
+  </div>
+  <div class="control-row" style="margin-bottom:14px">
+    <label>Eagle layer</label>
+    <input type="number" id="layer-input" value="21" min="1" max="255"
+           style="width:60px;background:#222;border:1px solid #555;color:#ddd;padding:4px 8px;font-family:monospace;font-size:13px;border-radius:3px">
+    <span style="color:#555;font-size:12px">21 = tPlace, 51 = tDocu, 1 = Top</span>
+  </div>
+  <div class="control-row" style="margin-bottom:14px">
+    <label>Seam width</label>
+    <input type="number" id="seam-input" value="0.01" min="0.01" max="10" step="0.01"
+           style="width:80px;background:#222;border:1px solid #555;color:#ddd;padding:4px 8px;font-family:monospace;font-size:13px;border-radius:3px">
+    <span style="color:#555;font-size:12px">mm (cut width through polygon)</span>
+  </div>
+  <div class="control-row" style="margin-top:4px;margin-bottom:14px">
+    <label style="width:auto;margin-right:8px">
+      <input type="checkbox" id="artifacts-cb"> Export artifacts
+    </label>
+    <span style="color:#555;font-size:12px">(intermediate SVGs from potrace)</span>
+  </div>
+  <button id="generate-btn" disabled>Generate SCR</button>
+  <span id="export-hint" style="margin-left:12px;font-size:13px;color:#f90">↑ calibrate the ruler first</span>
+</div>
+
+<script>
+const dropZone      = document.getElementById('drop-zone');
+const fileInput     = document.getElementById('file-input');
+const browseLink    = document.getElementById('browse-link');
+const controls      = document.getElementById('controls');
+const binSection    = document.getElementById('bin-section');
+const vecSection    = document.getElementById('vec-section');
+const thresholdSlider = document.getElementById('threshold');
+const thresholdVal  = document.getElementById('threshold-val');
+const detailSlider  = document.getElementById('detail');
+const detailVal     = document.getElementById('detail-val');
+const invertBtn     = document.getElementById('invert-btn');
+const canvasOrig    = document.getElementById('canvas-orig');
+const canvasBin     = document.getElementById('canvas-bin');
+const canvasVec     = document.getElementById('canvas-vec');
+const ctxOrig       = canvasOrig.getContext('2d');
+const ctxBin        = canvasBin.getContext('2d');
+const ctxVec        = canvasVec.getContext('2d');
+const vecStatus     = document.getElementById('vec-status');
+const stitchSection = document.getElementById('stitch-section');
+const canvasStitch  = document.getElementById('canvas-stitch');
+const ctxStitch     = canvasStitch.getContext('2d');
+const stitchStatus  = document.getElementById('stitch-status');
+const rulerBtn      = document.getElementById('ruler-btn');
+const scaleDisplay  = document.getElementById('scale-display');
+const canvasRuler   = document.getElementById('canvas-ruler');
+const ctxRuler      = canvasRuler.getContext('2d');
+const mmRow         = document.getElementById('mm-row');
+const pxLabel       = document.getElementById('px-label');
+const mmInput       = document.getElementById('mm-input');
+const exportSection = document.getElementById('export-section');
+const generateBtn   = document.getElementById('generate-btn');
+const layerInput    = document.getElementById('layer-input');
+const exportHint    = document.getElementById('export-hint');
+const artifactsCb   = document.getElementById('artifacts-cb');
+const seamInput     = document.getElementById('seam-input');
+
+let originalImageData = null;
+let currentContours = null;
+let currentPolygons = null;
+let currentSVG = null;
+let currentScale = null;
+let rulerActive = false;
+let rulerA = null, rulerB = null;
+let inverted = false;
+let vecTimer = null;
+
+// ── события ────────────────────────────────────────────────────────────────
+
+browseLink.addEventListener('click', e => { e.stopPropagation(); fileInput.click(); });
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type.startsWith('image/')) loadImage(file);
+});
+
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadImage(fileInput.files[0]); });
+
+thresholdSlider.addEventListener('input', () => {
+  thresholdVal.textContent = thresholdSlider.value;
+  if (originalImageData) { binarize(); scheduleVectorize(); }
+});
+
+detailSlider.addEventListener('input', () => {
+  detailVal.textContent = detailEpsilon().toFixed(2);
+  if (originalImageData) scheduleVectorize();
+});
+
+invertBtn.addEventListener('click', () => {
+  inverted = !inverted;
+  invertBtn.classList.toggle('active', inverted);
+  if (originalImageData) { binarize(); scheduleVectorize(); }
+});
+
+// ── загрузка ────────────────────────────────────────────────────────────────
+
+function loadImage(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    canvasOrig.width  = img.naturalWidth;
+    canvasOrig.height = img.naturalHeight;
+    ctxOrig.drawImage(img, 0, 0);
+    originalImageData = ctxOrig.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+
+    canvasBin.width  = img.naturalWidth;
+    canvasBin.height = img.naturalHeight;
+
+    controls.style.display = '';
+    binSection.style.display = 'block';
+
+    binarize();
+    scheduleVectorize();
+    URL.revokeObjectURL(url);
+  };
+  img.src = url;
+}
+
+// ── бинаризация ─────────────────────────────────────────────────────────────
+
+function binarize() {
+  const src = originalImageData;
+  const w = src.width, h = src.height;
+  const out = ctxBin.createImageData(w, h);
+  const threshold = parseInt(thresholdSlider.value);
+
+  for (let i = 0; i < w * h; i++) {
+    const r = src.data[i * 4], g = src.data[i * 4 + 1],
+          b = src.data[i * 4 + 2], a = src.data[i * 4 + 3];
+    const gray = a < 128 ? 255 : Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    let black = gray < threshold;
+    if (inverted) black = !black;
+    const v = black ? 0 : 255;
+    out.data[i * 4]     = v;
+    out.data[i * 4 + 1] = v;
+    out.data[i * 4 + 2] = v;
+    out.data[i * 4 + 3] = 255;
+  }
+  ctxBin.putImageData(out, 0, 0);
+}
+
+// ── векторизация ─────────────────────────────────────────────────────────────
+
+function detailEpsilon() {
+  const v = parseInt(detailSlider.value);
+  return Math.exp((v - 1) / 99 * Math.log(0.03)); // log scale: 1→1.0, 66→0.1, 100→0.03
+}
+function optTolerance() { return Math.min(1.0, Math.max(0.2, detailEpsilon() * 3)); }
+function rdpEpsilon()   { return detailEpsilon(); }
+
+function scheduleVectorize() {
+  clearTimeout(vecTimer);
+  vecTimer = setTimeout(doVectorize, 300);
+}
+
+function doVectorize() {
+  vecStatus.textContent = 'vectorizing...';
+  vecSection.style.display = 'block';
+
+  const dataUrl = canvasBin.toDataURL('image/png');
+  Potrace.setParameter({ opttolerance: optTolerance() });
+  Potrace.loadImageFromUrl(dataUrl);
+  Potrace.process(() => {
+    currentSVG = Potrace.getSVG(1);
+    const doc = new DOMParser().parseFromString(currentSVG, 'image/svg+xml');
+    const pathEl = doc.querySelector('path');
+
+    if (!pathEl) { vecStatus.textContent = 'no contours'; return; }
+
+    const rawSubpaths = parsePathD(pathEl.getAttribute('d'));
+    const eps = rdpEpsilon();
+    const contours = rawSubpaths.map(pts => ({
+      points: rdpClosed(pts, eps),
+      isCW: isClockwise(pts)
+    }));
+
+    drawOverlay(contours);
+    const cw  = contours.filter(c =>  c.isCW).length;
+    const ccw = contours.filter(c => !c.isCW).length;
+    vecStatus.textContent = `${cw} contours, ${ccw} holes`;
+
+    currentContours = contours;
+    currentPolygons = processContours(contours, 2);
+    drawStitched(currentPolygons);
+    stitchSection.style.display = 'block';
+    stitchStatus.textContent = `${currentPolygons.length} polygons`;
+    exportSection.style.display = 'block';
+    generateBtn.disabled = true;
+    exportHint.textContent = '↑ calibrate the ruler first';
+  });
+}
+
+function drawOverlay(contours) {
+  canvasVec.width  = canvasBin.width;
+  canvasVec.height = canvasBin.height;
+  ctxVec.drawImage(canvasBin, 0, 0);
+
+  for (const { points, isCW } of contours) {
+    if (points.length < 2) continue;
+    ctxVec.beginPath();
+    ctxVec.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctxVec.lineTo(points[i].x, points[i].y);
+    ctxVec.closePath();
+    ctxVec.strokeStyle = isCW ? '#4a9eff' : '#ff4444';
+    ctxVec.lineWidth = 1.5;
+    ctxVec.stroke();
+  }
+}
+
+// ── парсинг SVG path ─────────────────────────────────────────────────────────
+
+function parsePathD(d) {
+  const subpaths = [];
+  let current = null;
+  let cx = 0, cy = 0;
+
+  const tokens = d.replace(/([MCLZmclz])/g, ' $1 ').trim().split(/[\s,]+/).filter(t => t !== '');
+  const isNum = s => s !== undefined && /^-?[\d.]/.test(s);
+
+  const flush = () => {
+    if (current && current.length > 1) subpaths.push(finalizePath(current));
+    current = null;
+  };
+
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i++];
+    if (tok === 'M') {
+      flush();
+      cx = parseFloat(tokens[i++]); cy = parseFloat(tokens[i++]);
+      current = [{ x: cx, y: cy }];
+    } else if (tok === 'C') {
+      while (i + 5 < tokens.length && isNum(tokens[i])) {
+        const x1 = parseFloat(tokens[i++]), y1 = parseFloat(tokens[i++]);
+        const x2 = parseFloat(tokens[i++]), y2 = parseFloat(tokens[i++]);
+        const x  = parseFloat(tokens[i++]), y  = parseFloat(tokens[i++]);
+        const pts = sampleBezier({ x: cx, y: cy }, { x: x1, y: y1 }, { x: x2, y: y2 }, { x, y });
+        pts.shift();
+        current.push(...pts);
+        cx = x; cy = y;
+      }
+    } else if (tok === 'L') {
+      while (i + 1 < tokens.length && isNum(tokens[i])) {
+        cx = parseFloat(tokens[i++]); cy = parseFloat(tokens[i++]);
+        current.push({ x: cx, y: cy });
+      }
+    } else if (tok === 'Z' || tok === 'z') {
+      flush();
+    }
+  }
+  flush();
+  return subpaths;
+}
+
+// Убирает дублирующий конец закрытого пути и соседние почти-дубликаты
+function finalizePath(pts) {
+  // Potrace замыкает путь: последняя точка ≈ первая — убираем её
+  if (pts.length > 1) {
+    const f = pts[0], l = pts[pts.length - 1];
+    if (Math.hypot(l.x - f.x, l.y - f.y) < 1.0) pts = pts.slice(0, -1);
+  }
+  // Убираем почти-дубликаты соседних точек (CORNER-сегменты potrace дают
+  // два почти совпадающих L-пункта на каждый угол)
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const prev = out[out.length - 1];
+    if (Math.hypot(pts[i].x - prev.x, pts[i].y - prev.y) >= 0.5) out.push(pts[i]);
+  }
+  return out;
+}
+
+// ── кубический безье → ломаная ───────────────────────────────────────────────
+
+function sampleBezier(p0, p1, p2, p3) {
+  const dx = p3.x - p0.x, dy = p3.y - p0.y;
+  const n = Math.max(2, Math.ceil(Math.sqrt(dx*dx + dy*dy) * 1.5 / 0.5));
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, mt = 1 - t;
+    pts.push({
+      x: mt*mt*mt*p0.x + 3*mt*mt*t*p1.x + 3*mt*t*t*p2.x + t*t*t*p3.x,
+      y: mt*mt*mt*p0.y + 3*mt*mt*t*p1.y + 3*mt*t*t*p2.y + t*t*t*p3.y
+    });
+  }
+  return pts;
+}
+
+// ── Ramer–Douglas–Peucker (открытая и замкнутая версии) ─────────────────────
+
+// Для замкнутого контура: разрезаем по двум наиболее удалённым точкам
+// (они гарантированно попадают в настоящие вершины, а не на серединины рёбер),
+// применяем линейный RDP к каждой дуге, склеиваем.
+function rdpClosed(pts, eps) {
+  if (pts.length < 3) return pts;
+
+  // Центроид
+  let cx = 0, cy = 0;
+  for (const p of pts) { cx += p.x; cy += p.y; }
+  cx /= pts.length; cy /= pts.length;
+
+  // i0 — точка, максимально удалённая от центроида
+  let i0 = 0, d0 = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - cx, pts[i].y - cy);
+    if (d > d0) { d0 = d; i0 = i; }
+  }
+
+  // i1 — точка, максимально удалённая от pts[i0]
+  let i1 = 0, d1 = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const d = Math.hypot(pts[i].x - pts[i0].x, pts[i].y - pts[i0].y);
+    if (d > d1) { d1 = d; i1 = i; }
+  }
+
+  if (i0 === i1) return [pts[i0]];
+  if (i0 > i1) { const t = i0; i0 = i1; i1 = t; }
+
+  const r1 = rdp(pts.slice(i0, i1 + 1), eps);
+  const r2 = rdp([...pts.slice(i1), ...pts.slice(0, i0 + 1)], eps);
+  return [...r1.slice(0, -1), ...r2.slice(0, -1)];
+}
+
+function rdp(pts, eps) {
+  if (pts.length < 3) return pts;
+  const first = pts[0], last = pts[pts.length - 1];
+  const ldx = last.x - first.x, ldy = last.y - first.y;
+  const len = Math.sqrt(ldx*ldx + ldy*ldy);
+  let maxDist = 0, maxIdx = 0;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const dist = len === 0
+      ? Math.hypot(pts[i].x - first.x, pts[i].y - first.y)
+      : Math.abs((pts[i].y - first.y) * ldx - (pts[i].x - first.x) * ldy) / len;
+    if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+  }
+  if (maxDist > eps) {
+    const L = rdp(pts.slice(0, maxIdx + 1), eps);
+    const R = rdp(pts.slice(maxIdx), eps);
+    return L.slice(0, -1).concat(R);
+  }
+  return [first, last];
+}
+
+// ── направление обхода (знаковая площадь, ось Y вниз) ───────────────────────
+
+function isClockwise(pts) {
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    sum += (pts[j].x - pts[i].x) * (pts[j].y + pts[i].y);
+  }
+  return sum > 0;
+}
+
+// ── поиск вложенности и генерация швов ──────────────────────────────────────
+
+function polygonArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  return Math.abs(a) / 2;
+}
+
+function pointInPolygon(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+    if ((yi > pt.y) !== (yj > pt.y) && pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)
+      inside = !inside;
+  }
+  return inside;
+}
+
+function findParent(holePts, cwContours) {
+  const containing = cwContours.filter(c => pointInPolygon(holePts[0], c.points));
+  if (!containing.length) return null;
+  return containing.reduce((best, c) => polygonArea(c.points) < polygonArea(best.points) ? c : best);
+}
+
+function stitchHole(outer, hole, offsetPx) {
+  const SCALE = 1000;
+  const toC   = pt => ({ X: Math.round(pt.x * SCALE), Y: Math.round(pt.y * SCALE) });
+  const fromC = pt => ({ x: pt.X / SCALE, y: pt.Y / SCALE });
+
+  // seam rectangle: connect closest outer↔hole vertices
+  let minDist = Infinity, oi = 0, hi = 0;
+  for (let i = 0; i < outer.length; i++)
+    for (let j = 0; j < hole.length; j++) {
+      const d = (outer[i].x - hole[j].x) ** 2 + (outer[i].y - hole[j].y) ** 2;
+      if (d < minDist) { minDist = d; oi = i; hi = j; }
+    }
+
+  const ov = outer[oi], hv = hole[hi];
+  const dx = hv.x - ov.x, dy = hv.y - ov.y;
+  const len = Math.hypot(dx, dy);
+  const nx = len > 0.001 ? -dy / len * offsetPx : offsetPx;
+  const ny = len > 0.001 ?  dx / len * offsetPx : 0;
+
+  // extend seam past both endpoints so it overlaps both ring boundaries
+  const ext = offsetPx;
+  const ex = len > 0.001 ? dx / len * ext : 0;
+  const ey = len > 0.001 ? dy / len * ext : 0;
+
+  const seam = [
+    { x: ov.x - ex + nx, y: ov.y - ey + ny },
+    { x: hv.x + ex + nx, y: hv.y + ey + ny },
+    { x: hv.x + ex - nx, y: hv.y + ey - ny },
+    { x: ov.x - ex - nx, y: ov.y - ey - ny },
+  ].map(toC);
+
+  const cOuter = outer.map(toC);
+  const cHole  = hole.map(toC);
+
+  if (typeof ClipperLib === 'undefined') {
+    console.error('ClipperLib not loaded — check clipper.js');
+    return outer;
+  }
+
+  const c1 = new ClipperLib.Clipper();
+  c1.AddPath(cOuter, ClipperLib.PolyType.ptSubject, true);
+  c1.AddPath(cHole,  ClipperLib.PolyType.ptClip,    true);
+  const ring = [];
+  c1.Execute(ClipperLib.ClipType.ctDifference, ring,
+             ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+
+  const c2 = new ClipperLib.Clipper();
+  for (const path of ring)
+    c2.AddPath(path, ClipperLib.PolyType.ptSubject, true);
+  c2.AddPath(seam, ClipperLib.PolyType.ptClip, true);
+  const result = [];
+  c2.Execute(ClipperLib.ClipType.ctDifference, result,
+             ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+
+  if (result.length === 1) return result[0].map(fromC);
+  console.warn('stitchHole: expected 1 path, got', result.length, '— try wider seam');
+  return outer;
+}
+
+function processContours(contours, offset) {
+  const cwContours  = contours.filter(c =>  c.isCW);
+  const ccwContours = contours.filter(c => !c.isCW);
+
+  const holesOf = new Map(cwContours.map(c => [c, []]));
+  for (const hole of ccwContours) {
+    const parent = findParent(hole.points, cwContours);
+    if (parent) holesOf.get(parent).push(hole.points);
+  }
+
+  return cwContours.map(outer => {
+    let poly = [...outer.points];
+    for (const hole of holesOf.get(outer)) poly = stitchHole(poly, hole, offset);
+    return poly;
+  });
+}
+
+// ── генерация SCR ────────────────────────────────────────────────────────────
+
+generateBtn.addEventListener('click', () => {
+  if (!currentContours || !currentScale) return;
+  const layer = parseInt(layerInput.value) || 21;
+  const seamMm = parseFloat(seamInput.value) || 0.1;
+  const seamPx = seamMm / currentScale;
+  const h = canvasBin.height;
+
+  const polys = processContours(currentContours, seamPx);
+
+  const toCoord = pt => {
+    const x = (pt.x * currentScale).toFixed(4);
+    const y = ((h - pt.y) * currentScale).toFixed(4);
+    return `(${x} ${y})`;
+  };
+
+  const makeScr = ps => [
+    'GRID MM;',
+    'MITER 0;',
+    'SET WIRE_BEND 2;',
+    `CHANGE LAYER ${layer};`,
+    ...ps.map(poly => `POLYGON 'LOGO' 0 ${poly.map(toCoord).join(' ')} ${toCoord(poly[0])};`),
+  ].join('\n') + '\n';
+
+  triggerDownload('logo.scr', makeScr(polys), 'text/plain');
+
+  if (artifactsCb.checked) {
+    const w = canvasBin.width;
+    if (currentSVG)
+      setTimeout(() => triggerDownload('logo.svg', currentSVG, 'image/svg+xml'), 150);
+    setTimeout(() => triggerDownload('logo_stitched.svg', makeStitchedSvg(polys, w, h), 'image/svg+xml'), 300);
+  }
+});
+
+function makeStitchedSvg(polys, w, h) {
+  const paths = polys.map(poly => {
+    const d = poly.map((pt, i) =>
+      (i === 0 ? 'M' : 'L') + ' ' + pt.x.toFixed(2) + ' ' + pt.y.toFixed(2)
+    ).join(' ') + ' Z';
+    return `<path d="${d}" fill="black" fill-rule="nonzero"/>`;
+  }).join('\n  ');
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">\n  ${paths}\n</svg>\n`;
+}
+
+function triggerDownload(filename, content, mime) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── линейка ──────────────────────────────────────────────────────────────────
+
+rulerBtn.addEventListener('click', () => {
+  rulerActive = !rulerActive;
+  rulerBtn.classList.toggle('active', rulerActive);
+  canvasRuler.style.pointerEvents = rulerActive ? 'all' : 'none';
+  if (!rulerActive) resetRuler();
+});
+
+canvasRuler.addEventListener('click', e => {
+  if (!rulerActive) return;
+  const pt = canvasCoords(canvasRuler, e);
+  if (!rulerA || rulerB) {
+    // начать заново
+    rulerA = pt; rulerB = null;
+    currentScale = null;
+    scaleDisplay.textContent = '';
+    mmRow.style.display = 'none';
+    mmInput.value = '';
+  } else {
+    rulerB = pt;
+    const dist = Math.hypot(rulerB.x - rulerA.x, rulerB.y - rulerA.y);
+    pxLabel.textContent = `${dist.toFixed(1)} px`;
+    mmRow.style.display = 'flex';
+    mmInput.focus();
+  }
+  drawRuler();
+});
+
+mmInput.addEventListener('input', () => {
+  const mm = parseFloat(mmInput.value);
+  if (!rulerA || !rulerB || isNaN(mm) || mm <= 0) {
+    currentScale = null;
+    scaleDisplay.textContent = '';
+    generateBtn.disabled = true;
+    exportHint.textContent = '↑ calibrate the ruler first';
+    return;
+  }
+  const dist = Math.hypot(rulerB.x - rulerA.x, rulerB.y - rulerA.y);
+  currentScale = mm / dist;
+  scaleDisplay.textContent = `${currentScale.toFixed(4)} mm/px`;
+  generateBtn.disabled = false;
+  exportHint.textContent = '';
+});
+
+function canvasCoords(canvas, e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * canvas.width / r.width, y: (e.clientY - r.top) * canvas.height / r.height };
+}
+
+function resetRuler() {
+  rulerA = null; rulerB = null;
+  ctxRuler.clearRect(0, 0, canvasRuler.width, canvasRuler.height);
+  mmRow.style.display = 'none';
+  mmInput.value = '';
+}
+
+function drawRuler() {
+  ctxRuler.clearRect(0, 0, canvasRuler.width, canvasRuler.height);
+
+  function dot(pt) {
+    ctxRuler.beginPath();
+    ctxRuler.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+    ctxRuler.fillStyle = '#ffcc00';
+    ctxRuler.fill();
+    ctxRuler.strokeStyle = '#000';
+    ctxRuler.lineWidth = 1;
+    ctxRuler.stroke();
+  }
+
+  if (rulerA) dot(rulerA);
+
+  if (rulerA && rulerB) {
+    ctxRuler.beginPath();
+    ctxRuler.moveTo(rulerA.x, rulerA.y);
+    ctxRuler.lineTo(rulerB.x, rulerB.y);
+    ctxRuler.strokeStyle = '#ffcc00';
+    ctxRuler.lineWidth = 1.5;
+    ctxRuler.setLineDash([5, 3]);
+    ctxRuler.stroke();
+    ctxRuler.setLineDash([]);
+    dot(rulerB);
+
+    const dist = Math.hypot(rulerB.x - rulerA.x, rulerB.y - rulerA.y);
+    const mx = (rulerA.x + rulerB.x) / 2, my = (rulerA.y + rulerB.y) / 2;
+    ctxRuler.font = 'bold 12px monospace';
+    ctxRuler.fillStyle = '#000';
+    ctxRuler.fillText(`${dist.toFixed(1)}px`, mx + 7, my - 4);
+    ctxRuler.fillStyle = '#ffcc00';
+    ctxRuler.fillText(`${dist.toFixed(1)}px`, mx + 6, my - 5);
+  }
+}
+
+// ── отрисовка швов ───────────────────────────────────────────────────────────
+
+const PALETTE = ['#4a9eff', '#ff9944', '#44ee99', '#ff44aa', '#aaee44', '#aa44ff'];
+
+function drawStitched(polygons) {
+  canvasStitch.width  = canvasBin.width;
+  canvasStitch.height = canvasBin.height;
+  canvasRuler.width   = canvasBin.width;
+  canvasRuler.height  = canvasBin.height;
+  resetRuler();
+  currentScale = null;
+  scaleDisplay.textContent = '';
+
+  ctxStitch.globalAlpha = 0.25;
+  ctxStitch.drawImage(canvasBin, 0, 0);
+  ctxStitch.globalAlpha = 1;
+
+  polygons.forEach((poly, idx) => {
+    if (poly.length < 2) return;
+    const color = PALETTE[idx % PALETTE.length];
+    ctxStitch.beginPath();
+    ctxStitch.moveTo(poly[0].x, poly[0].y);
+    for (let i = 1; i < poly.length; i++) ctxStitch.lineTo(poly[i].x, poly[i].y);
+    ctxStitch.closePath();
+    ctxStitch.fillStyle = color + '55';
+    ctxStitch.fill();
+    ctxStitch.strokeStyle = color;
+    ctxStitch.lineWidth = 1.5;
+    ctxStitch.stroke();
+  });
+}
+</script>
+</body>
+</html>
