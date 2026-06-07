@@ -622,12 +622,14 @@ generateBtn.addEventListener('click', () => {
     return `(${x} ${y})`;
   };
 
+  const polygonPrefix = (layer >= 1 && layer <= 16) ? "POLYGON 'LOGO' 0" : 'POLYGON 0';
+
   const makeScr = ps => [
     'GRID MM;',
     'MITER 0;',
     'SET WIRE_BEND 2;',
     `CHANGE LAYER ${layer};`,
-    ...ps.map(poly => `POLYGON 'LOGO' 0 ${poly.map(toCoord).join(' ')} ${toCoord(poly[0])};`),
+    ...ps.map(poly => `${polygonPrefix} ${poly.map(toCoord).join(' ')} ${toCoord(poly[0])};`),
   ].join('\n') + '\n';
 
   triggerDownload('logo.scr', makeScr(polys), 'text/plain');
